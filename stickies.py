@@ -7,15 +7,17 @@ import time
 import tkinter as tk
 from ctypes import wintypes
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import messagebox, simpledialog
 
 DIR = Path.home() / "StickyMD"
 STATE = DIR / "state.json"
 STARTUP = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/StickyMD.vbs"
 FONT = "Segoe UI"
+F = 1.0
 KEY = "#ff00fe"
-MOD, WM_HOTKEY, PM_REMOVE = 3, 0x312, 1
 BAD = r'[\\/:*?"<>|]'
+MOD, WM_HOTKEY, PM_REMOVE = 3, 0x312, 1
 COLORS = {
     "yellow": ("#e6b800", "#fff6bf"),
     "green": ("#5fb84a", "#d3efca"),
@@ -31,7 +33,8 @@ THEMES = {
     "light": dict(bg="#f3f3f3", body=None, card="#ffffff", fg="#1f1f1f", muted="#666666", code="#d6d6d6",
                   link="#0645ad", tag="#7a3fb0", edge="#b5b5b5"),
 }
-DEFAULTS = {"theme": "dark", "color": "yellow", "size": 11, "alpha": 100, "pinned": True, "lines": True, "autocopy": True, "autostart": False}
+DEFAULTS = {"theme": "dark", "color": "yellow", "size": 11, "alpha": 100, "pinned": True, "lines": True,
+            "autocopy": True, "autostart": False}
 PATTERNS = [
     ("h1", r"^# .*$"),
     ("h2", r"^## .*$"),
@@ -45,6 +48,20 @@ PATTERNS = [
     ("tag", r"(?<![\w#&])#[A-Za-z][\w/-]*"),
 ]
 LINK = re.compile(r"\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|[^\]\n]*)?\]\]")
+GEO = re.compile(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)")
+
+
+def z(n):
+    return round(n * F)
+
+
+def geo(w, h, x, y):
+    return f"{z(w)}x{z(h)}+{x}+{y}"
+
+
+def scale_geo(g, f):
+    m = GEO.match(g)
+    return "x".join(str(round(int(v) * f)) for v in m.groups()[:2]) + "".join(f"+{round(int(v) * f)}" for v in m.groups()[2:]) if m else g
 
 
 def spans(text):
@@ -102,6 +119,19 @@ def tint(color, k=0.14):
     return "#%02x%02x%02x" % tuple(round(c + (t - c) * k) for c in (r, g, b))
 
 
+def aware():
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        ctypes.windll.user32.SetProcessDPIAware()
+
+
+def rounded(win):
+    win.update_idletasks()
+    hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+    ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(ctypes.c_int(2)), 4)
+
+
 def hover(w, bg=None, fg=None):
     def on(e):
         w._c = (w.cget("bg"), w.cget("fg"))
@@ -121,8 +151,8 @@ def tip(w, text):
         t = box["t"] = tk.Toplevel(w)
         t.overrideredirect(True)
         t.attributes("-topmost", True)
-        tk.Label(t, text=text, bg="#2b2b2b", fg="#f2f2f2", font=(FONT, 9), padx=6, pady=3).pack()
-        t.geometry(f"+{w.winfo_rootx()}+{w.winfo_rooty() + w.winfo_height() + 4}")
+        tk.Label(t, text=text, bg="#2b2b2b", fg="#f2f2f2", font=(FONT, 9), padx=z(6), pady=z(3)).pack()
+        t.geometry(f"+{w.winfo_rootx()}+{w.winfo_rooty() + w.winfo_height() + z(4)}")
 
     def hide(e=None):
         if "j" in box:
@@ -135,6 +165,39 @@ def tip(w, text):
     w.bind("<Button-1>", hide, add="+")
 
 
+def movable(win, *widgets):
+    d = {}
+
+    def grab(e):
+        d["o"] = (e.x_root - win.winfo_x(), e.y_root - win.winfo_y())
+
+    def drag(e):
+        win.geometry(f"+{e.x_root - d['o'][0]}+{e.y_root - d['o'][1]}")
+
+    for w in widgets:
+        w.bind("<ButtonPress-1>", grab, add="+")
+        w.bind("<B1-Motion>", drag)
+
+
+def sizer(win, w, h):
+    g = tk.Label(win, text="◢", font=(FONT, 12), padx=z(4), cursor="size_nw_se")
+    g.place(relx=1, rely=1, anchor="se")
+    g.bind("<B1-Motion>", lambda e: win.geometry(f"{max(w, e.x_root - win.winfo_rootx())}x{max(h, e.y_root - win.winfo_rooty())}"))
+    tip(g, "Resize")
+    return g
+
+
+def hbtn(parent, text, cmd, hint, size=12, red=False):
+    b = tk.Label(parent, text=text, font=(FONT, size), padx=z(11), pady=z(4), cursor="hand2")
+    if red:
+        hover(b, "#c42b1c", "#ffffff")
+    else:
+        hover(b)
+    tip(b, hint)
+    b.bind("<Button-1>", cmd, add="+")
+    return b
+
+
 class Note:
     def __init__(self, app, path, info):
         self.app, self.path = app, path
@@ -143,24 +206,23 @@ class Note:
         self.mtime = path.stat().st_mtime_ns if path.exists() else 0
         self.win = w = tk.Toplevel(app.root)
         w.overrideredirect(True)
-        w.geometry(info.get("geo", "300x340+120+120"))
+        w.geometry(info.get("geo", geo(300, 340, z(120), z(120))))
         w.attributes("-topmost", self.pinned)
         w.config(highlightthickness=1)
         self.bar = bar = tk.Frame(w, cursor="fleur")
         bar.pack(fill="x")
-        bar.bind("<ButtonPress-1>", self.grab)
-        bar.bind("<B1-Motion>", self.drag)
         self.btns = [
-            self.button(bar, "+", "left", lambda e: app.new(), "New note (Ctrl+N)"),
-            self.button(bar, "", "left", self.toggle_pin, "Keep on top / put down"),
-            self.button(bar, "✕", "right", self.close, "Close (Ctrl+W)", True),
-            self.button(bar, "⋯", "right", self.menu, "Menu"),
+            hbtn(bar, "+", lambda e: app.new(), "New note (Ctrl+N)"),
+            hbtn(bar, "", self.toggle_pin, "Keep on top / put down"),
+            hbtn(bar, "✕", self.close, "Close (Ctrl+W)", red=True),
+            hbtn(bar, "⋯", self.menu, "Menu"),
         ]
         self.pin = self.btns[1]
-        self.title = tk.Label(bar, font=(FONT, 9), anchor="w", padx=6)
+        for b, side in zip(self.btns, ("left", "left", "right", "right")):
+            b.pack(side=side)
+        self.title = tk.Label(bar, font=(FONT, 9), anchor="w", padx=z(6))
         self.title.pack(side="left", fill="x", expand=True)
-        self.title.bind("<ButtonPress-1>", self.grab)
-        self.title.bind("<B1-Motion>", self.drag)
+        movable(w, bar, self.title)
         self.title.bind("<Double-Button-1>", self.rename)
         tip(self.title, "Drag to move, double-click to rename")
         self.tools = tk.Frame(w)
@@ -173,21 +235,21 @@ class Note:
             ("•", "", lambda: self.prefix("- "), "Bullet list"),
             ("☐", "", lambda: self.prefix("- [ ] "), "Checklist"),
         ):
-            b = tk.Label(self.tools, text=label, font=(FONT, 11) + ((style,) if style else ()), padx=12, pady=6, cursor="hand2")
+            b = tk.Label(self.tools, text=label, font=(FONT, 11) + ((style,) if style else ()), padx=z(12), pady=z(6), cursor="hand2")
             b.pack(side="left")
             hover(b)
             tip(b, hint)
             b.bind("<Button-1>", lambda e, c=cmd: c(), add="+")
             self.tl.append(b)
-        self.bl = tk.Label(self.tools, text="↩ 0", font=(FONT, 10), padx=10, pady=6, cursor="hand2")
-        self.bl.pack(side="right", padx=(0, 22))
+        self.bl = tk.Label(self.tools, text="↩ 0", font=(FONT, 10), padx=z(10), pady=z(6), cursor="hand2")
+        self.bl.pack(side="right", padx=(0, z(22)))
         hover(self.bl)
         tip(self.bl, "Backlinks")
         self.bl.bind("<Button-1>", self.back, add="+")
         self.tl.append(self.bl)
-        self.msg = tk.Label(self.tools, font=(FONT, 9), padx=6)
+        self.msg = tk.Label(self.tools, font=(FONT, 9), padx=z(6))
         self.msg.pack(side="left")
-        self.text = t = tk.Text(w, bd=0, wrap="word", undo=True, padx=14, pady=10, spacing1=2, spacing3=2, highlightthickness=0)
+        self.text = t = tk.Text(w, bd=0, wrap="word", undo=True, padx=z(14), pady=z(10), spacing1=z(2), spacing3=z(2), highlightthickness=0)
         t.pack(fill="both", expand=True)
         t.insert("1.0", path.read_text(encoding="utf-8-sig") if path.exists() else "# ")
         t.edit_reset()
@@ -201,23 +263,10 @@ class Note:
         for key, fn in (("b", lambda: self.wrap("**")), ("i", lambda: self.wrap("*")), ("n", app.new),
                         ("w", self.close), ("l", app.hub.show)):
             t.bind(f"<Control-{key}>", lambda e, f=fn: (f(), "break")[1])
-        self.grip = tk.Label(w, text="◢", font=(FONT, 12), padx=4, cursor="size_nw_se")
-        self.grip.place(relx=1, rely=1, anchor="se")
-        tip(self.grip, "Resize")
-        self.grip.bind("<B1-Motion>", self.resize)
+        self.grip = sizer(w, z(200), z(140))
         self.apply()
         self.paint_title()
-
-    def button(self, bar, label, side, cmd, hint, close=False):
-        b = tk.Label(bar, text=label, font=(FONT, 12), padx=11, pady=4, cursor="hand2")
-        b.pack(side=side)
-        if close:
-            hover(b, "#c42b1c", "#ffffff")
-        else:
-            hover(b)
-        tip(b, hint)
-        b.bind("<Button-1>", cmd, add="+")
-        return b
+        rounded(w)
 
     def apply(self):
         cfg = self.app.cfg
@@ -258,17 +307,6 @@ class Note:
 
     def paint_back(self):
         self.bl.config(text=f"↩ {len(self.app.backlinks(self.path.stem))}")
-
-    def grab(self, e):
-        self.dx, self.dy = e.x_root - self.win.winfo_x(), e.y_root - self.win.winfo_y()
-
-    def drag(self, e):
-        self.win.geometry(f"+{e.x_root - self.dx}+{e.y_root - self.dy}")
-
-    def resize(self, e):
-        w = max(200, e.x_root - self.win.winfo_rootx())
-        h = max(140, e.y_root - self.win.winfo_rooty())
-        self.win.geometry(f"{w}x{h}")
 
     def paint_pin(self):
         self.pin.config(text="📌" if self.pinned else "⇩")
@@ -436,32 +474,27 @@ class Hub:
     def __init__(self, app):
         self.app, self.job, self.found = app, None, []
         self.win = w = tk.Toplevel(app.root)
-        w.title("Sticky Notes")
-        w.geometry("360x560+60+60")
-        w.protocol("WM_DELETE_WINDOW", self.hide)
-        self.top = tk.Frame(w)
-        self.top.pack(fill="x", padx=8, pady=(8, 0))
-        self.plus = tk.Label(self.top, text="+", font=(FONT, 18), padx=10, cursor="hand2")
-        self.plus.pack(side="left")
-        hover(self.plus)
-        tip(self.plus, "New note")
-        self.plus.bind("<Button-1>", lambda e: app.new(), add="+")
-        self.day = tk.Label(self.top, text="📅", font=(FONT, 14), padx=8, pady=4, cursor="hand2")
-        self.day.pack(side="left")
-        hover(self.day)
-        tip(self.day, "Today's note")
-        self.day.bind("<Button-1>", lambda e: app.today(), add="+")
-        self.gear = tk.Label(self.top, text="⚙", font=(FONT, 16), padx=10, pady=4, cursor="hand2")
-        self.gear.pack(side="right")
-        hover(self.gear)
-        tip(self.gear, "Settings")
-        self.gear.bind("<Button-1>", lambda e: app.show_settings(), add="+")
-        self.title = tk.Label(w, text="Sticky Notes", font=(FONT, 16, "bold"), anchor="w")
-        self.title.pack(fill="x", padx=16, pady=(4, 8))
+        w.overrideredirect(True)
+        w.geometry(geo(360, 560, z(60), z(60)))
+        w.config(highlightthickness=1)
+        w.bind("<Escape>", lambda e: self.hide())
+        self.top = tk.Frame(w, cursor="fleur")
+        self.top.pack(fill="x", padx=z(6), pady=(z(6), 0))
+        self.btns = [
+            hbtn(self.top, "+", lambda e: app.new(), "New note", 18),
+            hbtn(self.top, "📅", lambda e: app.today(), "Today's note", 13),
+            hbtn(self.top, "✕", lambda e: self.hide(), "Close", 12, True),
+            hbtn(self.top, "⚙", lambda e: app.show_settings(), "Settings", 15),
+        ]
+        for b, side in zip(self.btns, ("left", "left", "right", "right")):
+            b.pack(side=side)
+        self.title = tk.Label(w, text="Sticky Notes", font=(FONT, 18, "bold"), anchor="w", padx=z(8))
+        self.title.pack(fill="x", padx=z(8), pady=(z(4), z(10)))
+        movable(w, self.top, self.title)
         self.q = tk.StringVar()
         self.q.trace_add("write", lambda *a: (self.build(), self.sync()))
         self.search = tk.Entry(w, textvariable=self.q, relief="flat", font=(FONT, 11))
-        self.search.pack(fill="x", padx=16, ipady=8)
+        self.search.pack(fill="x", padx=z(16), ipady=z(8))
         self.hint = tk.Label(self.search, text="Search notes or #tags", font=(FONT, 11))
         self.hint.bind("<Button-1>", lambda e: self.search.focus_set())
         self.search.bind("<FocusIn>", self.sync)
@@ -469,26 +502,32 @@ class Hub:
         self.search.bind("<Return>", lambda e: self.found and self.app.open_note(self.found[0]))
         self.sync()
         self.canvas = tk.Canvas(w, highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True, pady=8)
+        self.canvas.pack(fill="both", expand=True, pady=z(8))
         self.list = tk.Frame(self.canvas)
         self.canvas.create_window((0, 0), window=self.list, anchor="nw", tags="f")
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig("f", width=e.width))
+        self.canvas.bind("<Configure>", self.resized)
         self.list.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         w.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-e.delta // 120, "units"))
-        w.bind("<Escape>", lambda e: self.hide())
+        self.grip = sizer(w, z(280), z(360))
         self.apply()
+        rounded(w)
         w.withdraw()
+
+    def resized(self, e):
+        self.canvas.itemconfig("f", width=e.width)
+        self.refresh()
 
     def apply(self):
         th = THEMES[self.app.cfg["theme"]]
-        self.win.config(bg=th["bg"])
+        self.win.config(bg=th["bg"], highlightbackground=th["edge"])
         for f in (self.top, self.canvas, self.list):
             f.config(bg=th["bg"])
-        for b in (self.plus, self.day, self.gear):
+        for b in self.btns:
             b.config(bg=th["bg"], fg=th["muted"])
         self.title.config(bg=th["bg"], fg=th["fg"])
         self.search.config(bg=th["card"], fg=th["fg"], insertbackground=th["fg"])
         self.hint.config(bg=th["card"], fg=th["muted"])
+        self.grip.config(bg=th["bg"], fg=th["muted"])
         if self.win.state() != "withdrawn":
             self.build()
 
@@ -496,7 +535,7 @@ class Hub:
         if self.q.get() or self.win.focus_get() is self.search:
             self.hint.place_forget()
         else:
-            self.hint.place(x=8, rely=0.5, anchor="w")
+            self.hint.place(x=z(8), rely=0.5, anchor="w")
 
     def show(self):
         self.win.deiconify()
@@ -529,25 +568,26 @@ class Hub:
         if not self.list.winfo_children():
             th = THEMES[self.app.cfg["theme"]]
             tk.Label(self.list, text="No matches" if q else "No notes yet", bg=th["bg"], fg=th["muted"],
-                     font=(FONT, 11)).pack(pady=40)
+                     font=(FONT, 11)).pack(pady=z(40))
 
     def card(self, p, txt):
         th = THEMES[self.app.cfg["theme"]]
         head = COLORS[self.app.state.get(p.name, {}).get("color", self.app.cfg["color"])][0]
         f = tk.Frame(self.list, bg=th["card"], cursor="hand2")
-        f.pack(fill="x", padx=16, pady=6)
-        tk.Frame(f, bg=head, height=3).pack(fill="x")
+        f.pack(fill="x", padx=z(16), pady=z(6))
+        tk.Frame(f, bg=head, height=z(3)).pack(fill="x")
         lt = time.localtime(p.stat().st_mtime)
         same = time.strftime("%Y%m%d", lt) == time.strftime("%Y%m%d")
         tk.Label(f, text=time.strftime("%I:%M %p" if same else "%b %d", lt), bg=th["card"], fg=th["muted"],
-                 font=(FONT, 9), anchor="e").pack(fill="x", padx=12, pady=(8, 0))
+                 font=(FONT, 9), anchor="e").pack(fill="x", padx=z(12), pady=(z(8), 0))
         tk.Label(f, text=p.stem, bg=th["card"], fg=th["fg"], font=(FONT, 12, "bold"),
-                 anchor="w").pack(fill="x", padx=12)
+                 anchor="w").pack(fill="x", padx=z(12))
         body = " ".join(txt.split()).lstrip("# ")
         if body.lower().startswith(p.stem.lower()):
             body = body[len(p.stem):].strip()
-        tk.Label(f, text=body[:140] or "empty note", bg=th["card"], fg=th["muted"], font=(FONT, 10), wraplength=290,
-                 justify="left", anchor="w").pack(fill="x", padx=12, pady=(2, 12))
+        wl = max(z(200), self.canvas.winfo_width() - z(56))
+        tk.Label(f, text=body[:140] or "empty note", bg=th["card"], fg=th["muted"], font=(FONT, 10), wraplength=wl,
+                 justify="left", anchor="w").pack(fill="x", padx=z(12), pady=(z(2), z(12)))
         kids = f.winfo_children()[1:]
 
         def lit(e, on):
@@ -599,7 +639,8 @@ class Lines:
             x1, y1, s1 = self.reach(a, b)
             x2, y2, s2 = self.reach(b, a)
             if s1 + s2 < 1:
-                self.c.create_line(x1, y1, x2, y2, fill=COLORS[a.color][0], width=2, arrow="last", arrowshape=(10, 12, 4))
+                self.c.create_line(x1, y1, x2, y2, fill=COLORS[a.color][0], width=z(2), arrow="last",
+                                   arrowshape=(z(10), z(12), z(4)))
         hidden = self.win.state() == "withdrawn"
         if segs and hidden:
             self.win.deiconify()
@@ -612,7 +653,7 @@ class Lines:
 class Keys:
     def __init__(self, app):
         self.app, self.u, self.msg = app, ctypes.windll.user32, wintypes.MSG()
-        for i, key in enumerate("NS", 1):
+        for i, key in enumerate("NSL", 1):
             self.u.RegisterHotKey(None, i, MOD, ord(key))
         self.poll()
 
@@ -620,20 +661,31 @@ class Keys:
         while self.u.PeekMessageW(ctypes.byref(self.msg), None, WM_HOTKEY, WM_HOTKEY, PM_REMOVE):
             if self.msg.wParam == 1:
                 x, y = self.app.root.winfo_pointerxy()
-                self.app.new((x - 30, y - 60))
-            else:
+                self.app.new((x - z(30), y - z(60)))
+            elif self.msg.wParam == 2:
                 self.app.toggle()
+            else:
+                self.app.hub.show()
         self.app.root.after(60, self.poll)
 
 
 class App:
     def __init__(self):
+        global F, FONT
         DIR.mkdir(exist_ok=True)
+        aware()
         self.root = tk.Tk()
         self.root.withdraw()
+        F = self.root.winfo_fpixels("1i") / 96
+        if "Segoe UI Variable Text" in tkfont.families(self.root):
+            FONT = "Segoe UI Variable Text"
         data = json.loads(STATE.read_text(encoding="utf-8-sig")) if STATE.exists() else {}
         self.cfg = {**DEFAULTS, **data.get("settings", {})}
         self.state = {k: v for k, v in data.get("notes", {}).items() if (DIR / k).exists()}
+        if "dpi" not in self.cfg:
+            for v in self.state.values():
+                v["geo"] = scale_geo(v["geo"], F) if "geo" in v else v.get("geo")
+            self.cfg["dpi"] = F
         self.notes, self.sw, self.graph, self.seen, self.hidden = [], None, {}, {}, False
         self.index()
         self.hub = Hub(self)
@@ -671,12 +723,12 @@ class App:
                 n.text.focus_force()
                 return
         info = {**self.state.get(path.name, {}), "closed": False}
-        if "geo" not in info:
+        if not info.get("geo"):
             if near:
-                x, y = near.win.winfo_x() + near.win.winfo_width() + 24, near.win.winfo_y()
+                x, y = near.win.winfo_x() + near.win.winfo_width() + z(24), near.win.winfo_y()
             else:
-                x = y = 120 + 30 * len(self.notes)
-            info["geo"] = f"300x340+{x}+{y}"
+                x = y = z(120 + 30 * len(self.notes))
+            info["geo"] = geo(300, 340, x, y)
         self.open(path, info)
 
     def open_link(self, name, near):
@@ -701,8 +753,8 @@ class App:
         while name.lower() in taken:
             i += 1
             name = f"Untitled {i}"
-        x, y = at or (120 + 30 * len(self.notes),) * 2
-        info = {"geo": f"300x340+{max(x, 0)}+{max(y, 0)}", "pinned": self.cfg["pinned"], "color": self.cfg["color"]}
+        x, y = at or (z(120 + 30 * len(self.notes)),) * 2
+        info = {"geo": geo(300, 340, max(x, 0), max(y, 0)), "pinned": self.cfg["pinned"], "color": self.cfg["color"]}
         self.open(DIR / f"{name}.md", info)
         t = self.notes[-1].text
         t.after(80, t.focus_force)
@@ -753,6 +805,9 @@ class App:
             for n in self.notes:
                 n.apply()
             self.hub.apply()
+        if key == "theme" and self.sw and self.sw.winfo_exists():
+            g = self.sw.geometry()
+            self.root.after(0, lambda: (self.sw.destroy(), self.show_settings(g)))
         self.save()
 
     def autostart(self, on):
@@ -762,46 +817,97 @@ class App:
         else:
             STARTUP.unlink(missing_ok=True)
 
-    def show_settings(self):
+    def show_settings(self, at=None):
         if self.sw and self.sw.winfo_exists():
             self.sw.lift()
             return
+        th = THEMES[self.cfg["theme"]]
         w = self.sw = tk.Toplevel(self.root)
-        w.title("Settings")
-        w.geometry("320x470")
-        w.resizable(False, False)
+        w.overrideredirect(True)
+        w.config(bg=th["bg"], highlightthickness=1, highlightbackground=th["edge"])
+        w.geometry(at or geo(330, 560, z(150), z(90)))
         w.bind("<Escape>", lambda e: w.destroy())
-        pad = dict(anchor="w", padx=16, pady=(12, 2))
-        tk.Label(w, text="Theme").pack(**pad)
+        head = tk.Frame(w, bg=th["bg"], cursor="fleur")
+        head.pack(fill="x", padx=z(6), pady=(z(6), 0))
+        ttl = tk.Label(head, text="Settings", bg=th["bg"], fg=th["fg"], font=(FONT, 16, "bold"), anchor="w", padx=z(8))
+        ttl.pack(side="left")
+        close = hbtn(head, "✕", lambda e: w.destroy(), "Close", 12, True)
+        close.config(bg=th["bg"], fg=th["muted"])
+        close.pack(side="right")
+        movable(w, head, ttl)
+
+        def sec(text):
+            tk.Label(w, text=text, bg=th["bg"], fg=th["muted"], font=(FONT, 9), anchor="w").pack(fill="x", padx=z(16), pady=(z(14), z(4)))
+
+        def row():
+            r = tk.Frame(w, bg=th["bg"])
+            r.pack(anchor="w", padx=z(16))
+            return r
+
+        def check(text, key, then=None):
+            v = tk.BooleanVar(value=self.cfg[key])
+            tk.Checkbutton(w, text=text, variable=v, bg=th["bg"], fg=th["fg"], selectcolor=th["card"], activebackground=th["bg"],
+                           activeforeground=th["fg"], highlightthickness=0, bd=0, font=(FONT, 10), anchor="w",
+                           command=lambda: (self.set(key, v.get()), then and then(v.get()))).pack(fill="x", padx=z(12), pady=z(2))
+
+        sec("Theme")
         theme = tk.StringVar(value=self.cfg["theme"])
-        row = tk.Frame(w)
-        row.pack(anchor="w", padx=16)
+        r = row()
         for v in THEMES:
-            tk.Radiobutton(row, text=v, value=v, variable=theme, command=lambda: self.set("theme", theme.get())).pack(side="left")
-        tk.Label(w, text="Default color for new notes").pack(**pad)
-        color = tk.StringVar(value=self.cfg["color"])
-        row = tk.Frame(w)
-        row.pack(anchor="w", padx=16)
-        for name, (head, _) in COLORS.items():
-            tk.Radiobutton(row, value=name, variable=color, indicatoron=0, width=3, bg=head, selectcolor=head,
-                           command=lambda: self.set("color", color.get())).pack(side="left", padx=2)
-        tk.Label(w, text="Font size").pack(**pad)
+            tk.Radiobutton(r, text=v.title(), value=v, variable=theme, indicatoron=0, bg=th["card"], fg=th["fg"],
+                           selectcolor=tint(th["card"], 0.3), activebackground=tint(th["card"]), activeforeground=th["fg"],
+                           relief="flat", bd=0, padx=z(18), pady=z(6), highlightthickness=0, font=(FONT, 10),
+                           command=lambda: self.set("theme", theme.get())).pack(side="left", padx=(0, z(6)))
+        sec("Default color for new notes")
+        rings = {}
+
+        def ring():
+            for n, lab in rings.items():
+                lab.config(highlightbackground=th["fg"] if n == self.cfg["color"] else th["bg"])
+
+        r = row()
+        for name, (hd, _) in COLORS.items():
+            lab = tk.Label(r, bg=hd, width=3, height=1, highlightthickness=z(2), highlightbackground=th["bg"], cursor="hand2")
+            lab.pack(side="left", padx=z(3))
+            lab.bind("<Button-1>", lambda e, n=name: (self.set("color", n), ring()))
+            tip(lab, name)
+            rings[name] = lab
+        ring()
+        sec("Font size")
         size = tk.StringVar(value=str(self.cfg["size"]))
-        tk.Spinbox(w, from_=9, to=24, width=5, textvariable=size, command=lambda: self.set("size", int(size.get()))).pack(anchor="w", padx=16)
-        tk.Label(w, text="Opacity").pack(**pad)
-        scale = tk.Scale(w, from_=50, to=100, orient="horizontal", length=240, command=lambda v: self.set("alpha", int(float(v))))
-        scale.set(self.cfg["alpha"])
-        scale.pack(anchor="w", padx=16)
-        pinned = tk.BooleanVar(value=self.cfg["pinned"])
-        tk.Checkbutton(w, text="New notes always on top", variable=pinned, command=lambda: self.set("pinned", pinned.get())).pack(**pad)
-        lines = tk.BooleanVar(value=self.cfg["lines"])
-        tk.Checkbutton(w, text="Draw arrows between linked notes", variable=lines, command=lambda: self.set("lines", lines.get())).pack(anchor="w", padx=16)
-        copy = tk.BooleanVar(value=self.cfg["autocopy"])
-        tk.Checkbutton(w, text="Copy selected text automatically", variable=copy, command=lambda: self.set("autocopy", copy.get())).pack(anchor="w", padx=16)
-        auto = tk.BooleanVar(value=self.cfg["autostart"])
-        tk.Checkbutton(w, text="Start with Windows", variable=auto,
-                       command=lambda: (self.set("autostart", auto.get()), self.autostart(auto.get()))).pack(anchor="w", padx=16)
-        tk.Button(w, text="Open notes folder", command=lambda: os.startfile(DIR)).pack(anchor="w", padx=16, pady=12)
+        tk.Spinbox(w, from_=9, to=24, width=5, textvariable=size, command=lambda: self.set("size", int(size.get())),
+                   bg=th["card"], fg=th["fg"], buttonbackground=th["card"], insertbackground=th["fg"], relief="flat",
+                   highlightthickness=0, font=(FONT, 10)).pack(anchor="w", padx=z(16))
+        sec("Opacity")
+        W, pad = z(280), z(10)
+        bar = tk.Canvas(w, width=W, height=z(26), bg=th["bg"], highlightthickness=0, cursor="hand2")
+        bar.pack(anchor="w", padx=z(16))
+
+        def draw(v):
+            x = pad + (W - 2 * pad) * (v - 50) / 50
+            bar.delete("all")
+            bar.create_line(pad, z(13), W - pad, z(13), width=z(4), fill=th["card"], capstyle="round")
+            bar.create_line(pad, z(13), x, z(13), width=z(4), fill=COLORS[self.cfg["color"]][0], capstyle="round")
+            bar.create_oval(x - z(8), z(5), x + z(8), z(21), fill=th["fg"], outline="")
+
+        def pick(e):
+            v = round(50 + 50 * min(max((e.x - pad) / (W - 2 * pad), 0), 1))
+            draw(v)
+            self.set("alpha", v)
+
+        bar.bind("<Button-1>", pick)
+        bar.bind("<B1-Motion>", pick)
+        draw(self.cfg["alpha"])
+        tk.Frame(w, bg=th["bg"], height=z(8)).pack()
+        check("New notes always on top", "pinned")
+        check("Draw arrows between linked notes", "lines")
+        check("Copy selected text automatically", "autocopy")
+        check("Start with Windows", "autostart", self.autostart)
+        folder = tk.Label(w, text="Open notes folder", bg=th["card"], fg=th["fg"], font=(FONT, 10), padx=z(14), pady=z(8), cursor="hand2")
+        folder.pack(anchor="w", padx=z(16), pady=z(16))
+        hover(folder)
+        folder.bind("<Button-1>", lambda e: os.startfile(DIR))
+        rounded(w)
 
     def tick(self):
         self.index()
