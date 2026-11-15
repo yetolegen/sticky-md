@@ -15,7 +15,7 @@ from io import BytesIO
 from itertools import accumulate
 from pathlib import Path
 from tkinter import font as tkfont
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox
 
 DIR = Path.home() / "StickyMD"
 STATE = DIR / "state.json"
@@ -436,16 +436,51 @@ def rounded(win):
     ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(ctypes.c_int(2)), 4)
 
 
+def mix(a, b, k):
+    ca = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    cb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#%02x%02x%02x" % tuple(round(x + (y - x) * k) for x, y in zip(ca, cb))
+
+
+def glide(w, bg, fg, steps=5):
+    if getattr(w, "_j", None):
+        w.after_cancel(w._j)
+    b0, f0 = w.cget("bg"), w.cget("fg")
+
+    def step(i):
+        if not w.winfo_exists():
+            return
+        w.config(bg=mix(b0, bg, i / steps), fg=mix(f0, fg, i / steps))
+        w._j = w.after(16, step, i + 1) if i < steps else None
+
+    step(1)
+
+
 def hover(w, bg=None, fg=None):
+    w._j = None
+
     def on(e):
-        w._c = (w.cget("bg"), w.cget("fg"))
-        w.config(bg=bg or tint(w._c[0]), fg=fg or w._c[1])
+        if w._j is None:
+            w._c = (w.cget("bg"), w.cget("fg"))
+        glide(w, bg or tint(w._c[0]), fg or w._c[1])
 
     def off(e):
-        w.config(bg=w._c[0], fg=w._c[1])
+        glide(w, *w._c)
+
+    def press(e):
+        if w._j:
+            w.after_cancel(w._j)
+            w._j = None
+        w.config(bg=mix(bg or tint(w._c[0]), "#000000", 0.25))
+
+    def release(e):
+        if w.winfo_exists():
+            glide(w, bg or tint(w._c[0]), fg or w._c[1])
 
     w.bind("<Enter>", on)
     w.bind("<Leave>", off)
+    w.bind("<ButtonPress-1>", press, add="+")
+    w.bind("<ButtonRelease-1>", release, add="+")
 
 
 def tip(w, text):
@@ -491,8 +526,8 @@ def sizer(win, w, h):
     return g
 
 
-def hbtn(parent, text, cmd, hint, size=12, red=False):
-    b = tk.Label(parent, text=text, font=(FONT, size), padx=z(11), pady=z(4), cursor="hand2")
+def hbtn(parent, text, cmd, hint, size=12, red=False, pad=11):
+    b = tk.Label(parent, text=text, font=(FONT, size), padx=z(pad), pady=z(4), cursor="hand2")
     if red:
         hover(b, "#c42b1c", "#ffffff")
     else:
@@ -526,6 +561,7 @@ class Note:
         self.color = info.get("color", app.cfg["color"])
         self.mtime = path.stat().st_mtime_ns if path.exists() else 0
         self.sug, self.raw, self.emb, self.sig, self.down = None, False, [], None, None
+        self.pl, self.ed = None, None
         self.win = w = tk.Toplevel(app.root)
         w._shaded, w._full = False, 0
         w.overrideredirect(True)
@@ -535,11 +571,11 @@ class Note:
         self.bar = bar = tk.Frame(w, cursor="fleur")
         bar.pack(fill="x")
         self.btns = [
-            hbtn(bar, "+", lambda e: app.new(), "New note (Ctrl+N)"),
-            hbtn(bar, "", self.toggle_pin, "Keep on top / put down"),
-            hbtn(bar, "✕", self.close, "Close (Ctrl+W)", red=True),
-            hbtn(bar, "⋯", self.menu, "Menu"),
-            hbtn(bar, "—", self.collapse, "Collapse (Ctrl+M)"),
+            hbtn(bar, "+", lambda e: app.new(), "New note (Ctrl+N)", pad=8),
+            hbtn(bar, "", self.toggle_pin, "Keep on top / put down", pad=8),
+            hbtn(bar, "✕", self.close, "Close (Ctrl+W)", red=True, pad=8),
+            hbtn(bar, "⋯", self.menu, "Menu", pad=8),
+            hbtn(bar, "—", self.collapse, "Collapse (Ctrl+M)", pad=8),
         ]
         self.pin = self.btns[1]
         for b, side in zip(self.btns, ("left", "left", "right", "right", "right")):
@@ -585,6 +621,7 @@ class Note:
         t.bind("<Return>", self.enter)
         t.bind("<Tab>", self.accept)
         t.bind("<Escape>", self.unsuggest)
+        t.bind("<F2>", lambda e: self.rename())
         t.bind("<Down>", lambda e: self.pick(1))
         t.bind("<Up>", lambda e: self.pick(-1))
         t.bind("<KeyRelease>", self.keyed)
@@ -701,20 +738,83 @@ class Note:
         m.tk_popup(e.x_root, e.y_root)
 
     def rename(self, e=None):
-        name = simpledialog.askstring("Rename", "Name:", initialvalue=self.path.stem, parent=self.win)
-        if name:
-            self.app.rename(self, name)
+        if self.ed:
+            return
+        head = COLORS[self.color][0]
+        en = self.ed = tk.Entry(self.bar, font=(FONT, 9), relief="flat", bd=0, bg=tint(head, 0.3), fg=ink(head),
+                                insertbackground=ink(head), highlightthickness=z(1), highlightbackground=ink(head),
+                                highlightcolor=ink(head), selectbackground=ink(head), selectforeground=head)
+        en.insert(0, self.path.stem)
+        en.select_range(0, "end")
+        self.title.pack_forget()
+        en.pack(side="left", fill="x", expand=True, padx=z(4), pady=z(6), ipady=z(2))
+        en.focus_force()
 
-    def wrap(self, mark):
+        def done(commit):
+            if self.ed is not en:
+                return
+            self.ed = None
+            name = en.get().strip()
+            en.destroy()
+            self.title.pack(side="left", fill="x", expand=True)
+            if commit and name and name != self.path.stem and not self.app.rename(self, name):
+                self.flash("name taken")
+
+        en.bind("<Return>", lambda e: done(True))
+        en.bind("<Escape>", lambda e: done(False))
+        en.bind("<FocusOut>", lambda e: done(True))
+
+    def wrap(self, mark, end=None):
         t = self.text
+        end = end or mark
         if t.tag_ranges("sel"):
             a, b = t.index("sel.first"), t.index("sel.last")
-            t.insert(b, mark)
+            t.insert(b, end)
             t.insert(a, mark)
         else:
-            t.insert("insert", mark * 2)
-            t.mark_set("insert", f"insert-{len(mark)}c")
+            t.insert("insert", mark + end)
+            t.mark_set("insert", f"insert-{len(end)}c")
         t.focus_force()
+
+    def copy(self):
+        t = self.text
+        t.clipboard_clear()
+        t.clipboard_append(t.get("sel.first", "sel.last"))
+        self.flash("copied")
+
+    def pill(self):
+        t = self.text
+        box = t.tag_ranges("sel") and t.bbox("sel.first")
+        if not box or self.win._shaded:
+            return self.unpill()
+        th = THEMES[self.app.cfg["theme"]]
+        if not self.pl:
+            p = tk.Toplevel(self.win)
+            p.overrideredirect(True)
+            p.attributes("-topmost", True)
+            p.config(bg=th["card"], highlightthickness=1, highlightbackground=th["edge"])
+            for label, style, cmd in (
+                ("B", "bold", lambda: self.wrap("**")),
+                ("I", "italic", lambda: self.wrap("*")),
+                ("S", "overstrike", lambda: self.wrap("~~")),
+                ("H", "", lambda: self.wrap("==")),
+                ("[[ ]]", "", lambda: self.wrap("[[", "]]")),
+                ("Copy", "", self.copy),
+            ):
+                b = tk.Label(p, text=label, font=(FONT, 10) + ((style,) if style else ()), bg=th["card"], fg=th["fg"],
+                             padx=z(8), pady=z(4), cursor="hand2")
+                b.pack(side="left")
+                hover(b)
+                b.bind("<ButtonRelease-1>", lambda e, c=cmd: (c(), self.unpill(), self.text.focus_force()), add="+")
+            rounded(p)
+            self.pl = p
+        self.pl.update_idletasks()
+        self.pl.geometry(f"+{t.winfo_rootx() + box[0]}+{max(t.winfo_rooty() + box[1] - self.pl.winfo_reqheight() - z(6), 0)}")
+
+    def unpill(self):
+        if self.pl:
+            self.pl.destroy()
+            self.pl = None
 
     def prefix(self, p):
         self.text.insert("insert linestart", p)
@@ -724,6 +824,7 @@ class Note:
         t = self.text
         t.focus_force()
         self.unsuggest()
+        self.unpill()
         self.down = (e.x, e.y)
         line, col = map(int, t.index(f"@{e.x},{e.y}").split("."))
         m = re.match(r"- \[([ x])\] ", t.get(f"{line}.0", f"{line}.end"))
@@ -769,6 +870,8 @@ class Note:
     def keyed(self, e):
         self.style()
         t = self.text
+        if not t.tag_ranges("sel"):
+            self.unpill()
         m = re.search(r"\[\[([^\]\n]*)$", t.get("insert linestart", "insert"))
         names = [p.stem for p in sorted(DIR.glob("*.md")) if m and m.group(1).lower() in p.stem.lower()][:8]
         if m and names and e.keysym not in ("Up", "Down", "Return", "Tab", "Escape"):
@@ -853,6 +956,7 @@ class Note:
             t.clipboard_clear()
             t.clipboard_append(t.get("sel.first", "sel.last"))
             self.flash("copied")
+        self.pill()
 
     def flash(self, text):
         self.msg.config(text=text)
@@ -988,6 +1092,7 @@ class Note:
 
     def close(self, e=None):
         self.unsuggest()
+        self.unpill()
         self.autoname()
         self.app.state[self.path.name] = {**self.info(), "closed": True}
         self.win.destroy()
@@ -1141,8 +1246,16 @@ class Hub(Pane):
         if body.lower().startswith(p.stem.lower()):
             body = body[len(p.stem):].strip()
         wl = max(z(200), self.canvas.winfo_width() - z(56))
+        tags = list(dict.fromkeys(re.findall(r"(?<![\w#&])#[A-Za-z][\w/-]*", txt)))[:3]
+        n = len(self.app.backlinks(p.stem))
+        chips = [(c, th["tag"]) for c in tags] + ([(f"↩ {n}", th["muted"])] if n else [])
         tk.Label(f, text=body[:140] or "empty note", bg=th["card"], fg=th["muted"], font=(FONT, 10), wraplength=wl,
-                 justify="left", anchor="w").pack(fill="x", padx=z(12), pady=(z(2), z(12)))
+                 justify="left", anchor="w").pack(fill="x", padx=z(12), pady=(z(2), z(8) if chips else z(12)))
+        if chips:
+            row = tk.Frame(f, bg=th["card"])
+            row.pack(fill="x", padx=z(12), pady=(0, z(12)))
+            for text, col in chips:
+                tk.Label(row, text=text, bg=tint(th["card"], 0.12), fg=col, font=(FONT, 9), padx=z(7), pady=z(1)).pack(side="left", padx=(0, z(5)))
         kids = f.winfo_children()[1:]
 
         def lit(e, on):
@@ -1435,8 +1548,7 @@ class App:
         name = re.sub(BAD, "", name).strip()
         old, new = note.path, DIR / f"{name}.md"
         if not name or (new.exists() and new.name.lower() != old.name.lower()):
-            messagebox.showerror("Rename", "Name is empty or taken.", parent=note.win)
-            return
+            return False
         if old.exists():
             old.rename(new)
         pat = re.compile(r"\[\[" + re.escape(old.stem) + r"(?=[\]|#])", re.I)
@@ -1454,6 +1566,7 @@ class App:
         note.paint_title()
         self.index()
         self.hub.refresh()
+        return True
 
     def maybe_quit(self):
         if not self.notes and self.hub.win.state() == "withdrawn":

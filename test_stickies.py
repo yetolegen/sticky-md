@@ -2,6 +2,12 @@ from stickies import (blocks, clean, html_to_md, ink, image_at, link_at, links_o
                       offset, spans, title_of, tsv_to_md, unicode_tex, url_at)
 
 
+def test_mix():
+    from stickies import mix
+    assert mix("#000000", "#ffffff", 0.5) == "#808080"
+    assert mix("#102030", "#102030", 0.7) == "#102030"
+
+
 def test_tables_and_rules():
     t = "intro\n| a | b |\n| --- | :-: |\n| 1 | 2 |\n\n---\n```\n| x | y |\n| - | - |\n```"
     b = blocks(t)

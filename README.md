@@ -27,7 +27,9 @@ Notes that link to each other get arrows drawn between them on your desktop. Lin
 
 ## obsidian stuff
 - `[[wikilinks]]` (click opens, makes it if missing), `[[note#heading]]`, `[[` autocomplete
-- backlinks (`↩ n`), `#tags`, daily note (📅), rename updates links everywhere
+- backlinks (`↩ n`), `#tags`, daily note (📅)
+- rename like Windows: double-click the title (or F2), type, Enter. no dialog. links update everywhere
+- select text: floating pill with bold, italic, strike, highlight, `[[link]]`, copy
 - callouts `> [!tip]`, code blocks, quotes, numbered + checklists, `==highlight==`, frontmatter
 - `$LaTeX$` and `$$...$$`: formula shows rendered while cursor is in it
 - `![[pic.png]]` / `![alt](pic.png)`: click opens image
