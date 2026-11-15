@@ -1,5 +1,7 @@
 # sticky-md
 
+![type [[Ideas]] in one note, an arrow draws to the Ideas note](docs/demo.png)
+
 Sticky notes that are an Obsidian vault. Always on top. Built for fast capture.
 
 Notes = plain `.md` in `~/StickyMD`. Open that folder in Obsidian, same notes. Edit in either, they sync live.
