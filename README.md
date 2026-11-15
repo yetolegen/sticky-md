@@ -33,7 +33,7 @@ Notes that link to each other get arrows drawn between them on your desktop. Lin
 - callouts `> [!tip]`, code blocks, quotes, numbered + checklists, `==highlight==`, frontmatter
 - `$LaTeX$` and `$$...$$`: formula shows rendered while cursor is in it
 - `![[pic.png]]` / `![alt](pic.png)`: click opens image
-- fonts, 4 themes, colors, opacity in settings
+- fonts, 4 themes, colors, opacity in settings. default font Inter (bundled in `fonts/`, OFL license)
 
 ## other
 - pin = always on top, put down = normal window

@@ -25,8 +25,8 @@ F = 1.0
 KEY = "#ff00fe"
 BAD = r'[\\/:*?"<>|]'
 IMG = (".png", ".gif", ".jpg", ".jpeg", ".bmp", ".webp")
-FAMILIES = ("Segoe UI Variable Text", "Segoe UI", "Calibri", "Cambria", "Candara", "Consolas", "Cascadia Code",
-            "Georgia", "Arial", "Verdana", "Tahoma", "Times New Roman", "Trebuchet MS")
+FAMILIES = ("Inter", "Segoe UI Variable Text", "Segoe UI", "Roboto", "Bahnschrift", "Calibri", "Cambria", "Candara",
+            "Consolas", "Cascadia Code", "Georgia", "Arial", "Verdana", "Tahoma", "Times New Roman", "Trebuchet MS")
 MOD, WM_HOTKEY, PM_REMOVE = 3, 0x312, 1
 COLORS = {
     "yellow": ("#e6b800", "#fff6bf"),
@@ -1429,11 +1429,13 @@ class App:
         global F, FONT
         DIR.mkdir(exist_ok=True)
         aware()
+        for ttf in (Path(__file__).parent / "fonts").glob("*.ttf"):
+            ctypes.windll.gdi32.AddFontResourceExW(str(ttf), 0x10, 0)
         self.root = tk.Tk()
         self.root.withdraw()
         F = self.root.winfo_fpixels("1i") / 96
-        if "Segoe UI Variable Text" in tkfont.families(self.root):
-            FONT = "Segoe UI Variable Text"
+        have = set(tkfont.families(self.root))
+        FONT = next((f for f in ("Inter", "Segoe UI Variable Text") if f in have), FONT)
         data = json.loads(STATE.read_text(encoding="utf-8-sig")) if STATE.exists() else {}
         self.cfg = {**DEFAULTS, **data.get("settings", {})}
         self.state = {k: v for k, v in data.get("notes", {}).items() if (DIR / k).exists()}
@@ -1651,8 +1653,7 @@ class App:
             rings[name] = lab
         ring()
         sec("Note font")
-        have = set(tkfont.families(self.root))
-        fams = [f for f in FAMILIES if f in have]
+        fams = [f for f in FAMILIES if f in set(tkfont.families(self.root))]
         fv = tk.StringVar(value=self.cfg["font"] or FONT)
         om = tk.OptionMenu(w, fv, *fams, command=lambda v: self.set("font", v))
         om.config(bg=th["card"], fg=th["fg"], activebackground=tint(th["card"]), activeforeground=th["fg"], highlightthickness=0,
