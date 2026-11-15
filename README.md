@@ -6,7 +6,12 @@ Sticky notes that are an Obsidian vault. Always on top. Paste anything, it looks
 
 Notes = plain `.md` in `~/StickyMD`. Open that folder in Obsidian, same notes. Edit in either, they sync live.
 
-Run: `pythonw stickies.py`. Windows. Needs Python 3 + `matplotlib` for LaTeX (optional, Pillow for jpg).
+## install (windows)
+1. install Python 3 from python.org. tick "Add python.exe to PATH"
+2. green Code button on GitHub, Download ZIP, unzip
+3. double-click `install.bat`. it sets up, puts a shortcut on your Desktop, opens the app
+
+Dev run: `pythonw stickies.py`. `matplotlib` = LaTeX preview (optional).
 
 ## paste = looks like the source
 - copy from web, Word, Excel, paste: headings, bold, lists, links, tables come over
